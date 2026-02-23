@@ -1,40 +1,141 @@
-const { WebcastPushConnection } = require("tiktok-live-connector");
-const express = require("express");
-const http = require("http");
-const WebSocket = require("ws");
-
-const TIKTOK_USERNAME = "hello51211"; // đổi username
-const PORT = process.env.PORT || 3000;
+import express from "express";
+import { Rcon } from "rcon-client";
 
 const app = express();
-const server = http.createServer(app);
-const wss = new WebSocket.Server({ server });
+app.use(express.json());
 
-let clients = [];
+// ===== ENV =====
+const RCON_HOST = process.env.RCON_HOST;
+const RCON_PORT = parseInt(process.env.RCON_PORT);
+const RCON_PASSWORD = process.env.RCON_PASSWORD;
 
-/* ================= EXPRESS ================= */
+// ===== STATE =====
+let rcon = null;
+let connecting = false;
+let commandQueue = [];
 
+// ===== CONNECT FUNCTION =====
+async function connectRcon() {
+    if (connecting) return;
+    connecting = true;
+
+    try {
+        console.log("🔄 Connecting to RCON...");
+        rcon = await Rcon.connect({
+            host: RCON_HOST,
+            port: RCON_PORT,
+            password: RCON_PASSWORD,
+            timeout: 5000
+        });
+
+        console.log("✅ RCON Connected");
+
+        rcon.on("end", () => {
+            console.log("❌ RCON Disconnected");
+            rcon = null;
+        });
+
+        flushQueue();
+
+    } catch (err) {
+        console.log("⚠ RCON Connect Failed:", err.message);
+        rcon = null;
+    }
+
+    connecting = false;
+}
+
+// ===== SEND COMMAND =====
+async function sendCommand(command) {
+    if (!rcon) {
+        commandQueue.push(command);
+        await connectRcon();
+        return;
+    }
+
+    try {
+        await rcon.send(command);
+        console.log("✔ Sent:", command);
+    } catch (err) {
+        console.log("⚠ Send Failed, retrying...");
+        rcon = null;
+        commandQueue.push(command);
+        await connectRcon();
+    }
+}
+
+// ===== FLUSH QUEUE =====
+async function flushQueue() {
+    while (rcon && commandQueue.length > 0) {
+        const cmd = commandQueue.shift();
+        try {
+            await rcon.send(cmd);
+            console.log("✔ Flushed:", cmd);
+        } catch {
+            commandQueue.unshift(cmd);
+            rcon = null;
+            break;
+        }
+    }
+}
+
+// ===== HEALTH CHECK =====
 app.get("/", (req, res) => {
-  res.send("TikTok Minecraft Bridge Running 🚀");
+    res.send("TNTCoin Server Running 🚀");
 });
 
-/* ================= WEBSOCKET ================= */
+// ===== GIFT ENDPOINT =====
+app.post("/gift", async (req, res) => {
+    const { type } = req.body;
 
-wss.on("connection", (ws) => {
-  console.log("Minecraft connected");
-  clients.push(ws);
+    switch (type) {
+        case "follow":
+            await sendCommand("execute as @a run summon tnt");
+            break;
 
-  ws.on("close", () => {
-    clients = clients.filter(c => c !== ws);
-    console.log("Minecraft disconnected");
-  });
+        case "rose":
+            await sendCommand("execute as @a run summon tnt");
+            break;
+
+        case "heart5":
+            await sendCommand("execute as @a run summon tnt ~ ~5 ~");
+            break;
+
+        case "pig":
+            await sendCommand("execute as @a run summon tnt ~ ~10 ~");
+            break;
+
+        case "reset":
+            await sendCommand("kill @e[type=tnt]");
+            break;
+
+        case "minus3":
+            await sendCommand("scoreboard players remove @a win 3");
+            break;
+
+        case "offlive":
+            await sendCommand("kick @a Off Live Triggered");
+            break;
+
+        default:
+            return res.status(400).send("Unknown gift");
+    }
+
+    res.send("Gift processed");
 });
 
-/* ================= START SERVER ================= */
+// ===== AUTO RECONNECT LOOP =====
+setInterval(() => {
+    if (!rcon) {
+        connectRcon();
+    }
+}, 10000);
 
-server.listen(PORT, () => {
-  console.log("Server running on port", PORT);
-});
+// ===== START SERVER =====
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+    console.log(`🚀 Server running on port ${PORT}`);
+});});
 
 /* ================= TIKTOK ================= */
 
